@@ -13,7 +13,8 @@ function isValidSupabaseUrl(value) {
 }
 
 function isValidAnonKey(value) {
-  return typeof value === "string" && value.startsWith("eyJ") && value.length > 80;
+  if (typeof value !== "string") return false;
+  return (value.startsWith("eyJ") && value.length > 80) || value.startsWith("sb_publishable_");
 }
 
 export const isSupabaseConfigured = isValidSupabaseUrl(supabaseUrl) && isValidAnonKey(supabaseAnonKey);
