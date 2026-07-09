@@ -1,0 +1,19 @@
+{
+  "name": "Finanzas personales",
+  "short_name": "Finanzas",
+  "description": "Control personal de cuentas, nomina, gastos fijos, coche, negocio y deudas.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "background_color": "#f1f5f9",
+  "theme_color": "#0f67d7",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
