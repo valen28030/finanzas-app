@@ -143,6 +143,14 @@ button {
   background: #0b56b8;
 }
 
+.primary-button:disabled,
+.secondary-button:disabled,
+.ghost-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
+}
+
 .secondary-button {
   background: #eaf2ff;
   color: #0f67d7;

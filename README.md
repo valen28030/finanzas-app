@@ -1,16 +1,26 @@
-# React + Vite
+# Finanzas App
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+App personal para controlar cuentas, movimientos, gastos fijos, coche, negocio, deudas y nomina.
 
-Currently, two official plugins are available:
+## Desarrollo
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+```bash
+npm install
+npm run dev
+```
 
-## React Compiler
+## Publicacion
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+La app esta preparada para GitHub Pages. El workflow esta en `.github/workflows/deploy.yml`.
 
-## Expanding the Oxlint configuration
+## Sincronizacion con Supabase
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+1. En Supabase, abre `SQL Editor`.
+2. Ejecuta el contenido de `supabase/schema.sql`.
+3. En GitHub, ve a `Settings > Secrets and variables > Actions > Variables`.
+4. Crea estas variables:
+   - `VITE_SUPABASE_URL`
+   - `VITE_SUPABASE_ANON_KEY`
+5. Vuelve a ejecutar el workflow `Deploy GitHub Pages`.
+
+Para desarrollo local, copia `.env.example` a `.env.local` y rellena los mismos valores.

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -24,6 +24,7 @@ import {
   Upload,
   Wallet,
 } from "lucide-react";
+import { isSupabaseConfigured, supabase } from "./lib/supabase";
 
 const STORAGE_KEY = "finanzas-personales-v1";
 const today = new Date();
@@ -266,10 +267,66 @@ function App() {
   const [businessForm, setBusinessForm] = useState(createBusinessForm());
   const [debtForm, setDebtForm] = useState(createDebtForm());
   const [payrollForm, setPayrollForm] = useState(() => createPayrollForm(finance.salaryPlan));
+  const [session, setSession] = useState(null);
+  const [remoteReady, setRemoteReady] = useState(!isSupabaseConfigured);
+  const [syncStatus, setSyncStatus] = useState(
+    isSupabaseConfigured ? "Conecta tu cuenta para sincronizar." : "Configura Supabase para activar la nube.",
+  );
+  const [authForm, setAuthForm] = useState({ email: "", password: "" });
+  const [authBusy, setAuthBusy] = useState(false);
+  const financeRef = useRef(finance);
+
+  useEffect(() => {
+    financeRef.current = finance;
+  }, [finance]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(finance));
   }, [finance]);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) return undefined;
+
+    let active = true;
+
+    supabase.auth.getSession().then(({ data }) => {
+      if (!active) return;
+      setSession(data.session);
+      if (!data.session) {
+        setRemoteReady(false);
+        setSyncStatus("Inicia sesión para sincronizar portátil e iPhone.");
+      }
+    });
+
+    const { data: subscription } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+      if (!nextSession) {
+        setRemoteReady(false);
+        setSyncStatus("Sesión cerrada. Los cambios se guardan solo en este dispositivo.");
+      }
+    });
+
+    return () => {
+      active = false;
+      subscription.subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured || !session?.user?.id) return;
+    loadRemoteFinance(session.user.id);
+  }, [session?.user?.id]);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured || !session?.user?.id || !remoteReady) return undefined;
+
+    setSyncStatus("Guardando cambios en la nube...");
+    const timeout = window.setTimeout(() => {
+      saveRemoteFinance(finance, session.user.id);
+    }, 700);
+
+    return () => window.clearTimeout(timeout);
+  }, [finance, remoteReady, session?.user?.id]);
 
   const accountMap = useMemo(
     () => Object.fromEntries(finance.accounts.map((account) => [account.id, account])),
@@ -673,6 +730,103 @@ function App() {
     });
   }
 
+  async function loadRemoteFinance(userId) {
+    setRemoteReady(false);
+    setSyncStatus("Descargando datos de Supabase...");
+
+    const { data, error } = await supabase
+      .from("finance_states")
+      .select("data, updated_at")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (error) {
+      setSyncStatus(`Error al descargar: ${error.message}`);
+      return;
+    }
+
+    if (data?.data) {
+      setFinance(normalizeFinance(data.data));
+      setSyncStatus(`Sincronizado. Última nube: ${formatFullDateTime(data.updated_at)}`);
+    } else {
+      const saved = await saveRemoteFinance(financeRef.current, userId, {
+        quiet: true,
+      });
+      setSyncStatus(saved ? "Nube iniciada con los datos de este dispositivo." : "No se pudo iniciar la nube.");
+    }
+
+    setRemoteReady(true);
+  }
+
+  async function saveRemoteFinance(nextFinance, userId, options = {}) {
+    const { error } = await supabase.from("finance_states").upsert(
+      {
+        data: nextFinance,
+        updated_at: new Date().toISOString(),
+        user_id: userId,
+      },
+      { onConflict: "user_id" },
+    );
+
+    if (error) {
+      setSyncStatus(`Error al guardar: ${error.message}`);
+      return false;
+    }
+
+    if (!options.quiet) {
+      setSyncStatus(`Sincronizado: ${formatFullDateTime(new Date().toISOString())}`);
+    }
+
+    return true;
+  }
+
+  async function handleAuth(mode) {
+    if (!isSupabaseConfigured) return;
+    const email = authForm.email.trim();
+    const password = authForm.password;
+    if (!email || password.length < 6) {
+      setSyncStatus("Introduce email y una contraseña de al menos 6 caracteres.");
+      return;
+    }
+
+    setAuthBusy(true);
+    setSyncStatus(mode === "signUp" ? "Creando cuenta..." : "Iniciando sesión...");
+    const redirectTo = `${window.location.origin}${import.meta.env.BASE_URL}`;
+
+    const response =
+      mode === "signUp"
+        ? await supabase.auth.signUp({ email, password, options: { emailRedirectTo: redirectTo } })
+        : await supabase.auth.signInWithPassword({ email, password });
+
+    setAuthBusy(false);
+
+    if (response.error) {
+      setSyncStatus(response.error.message);
+      return;
+    }
+
+    setSyncStatus(
+      mode === "signUp"
+        ? "Cuenta creada. Si Supabase te pide confirmar email, revisa tu correo."
+        : "Sesión iniciada. Descargando datos...",
+    );
+  }
+
+  async function signOut() {
+    if (!isSupabaseConfigured) return;
+    await supabase.auth.signOut();
+  }
+
+  function uploadCurrentDevice() {
+    if (!session?.user?.id) return;
+    saveRemoteFinance(financeRef.current, session.user.id);
+  }
+
+  function downloadCloudState() {
+    if (!session?.user?.id) return;
+    loadRemoteFinance(session.user.id);
+  }
+
   function updateAccountBalance(accountId, balance) {
     setFinance((current) => ({
       ...current,
@@ -844,10 +998,19 @@ function App() {
 
             {activeTab === "settings" && (
               <SettingsView
+                authBusy={authBusy}
+                authForm={authForm}
+                downloadCloudState={downloadCloudState}
                 exportData={exportData}
                 finance={finance}
+                handleAuth={handleAuth}
                 importData={importData}
                 resetDemoData={resetDemoData}
+                session={session}
+                setAuthForm={setAuthForm}
+                signOut={signOut}
+                syncStatus={syncStatus}
+                uploadCurrentDevice={uploadCurrentDevice}
                 updateAccountBalance={updateAccountBalance}
               />
             )}
@@ -1910,10 +2073,19 @@ function DebtsView({ finance, form, removeDebt, setForm, submitDebt, toggleDebt 
 }
 
 function SettingsView({
+  authBusy,
+  authForm,
+  downloadCloudState,
   exportData,
   finance,
+  handleAuth,
   importData,
   resetDemoData,
+  session,
+  setAuthForm,
+  signOut,
+  syncStatus,
+  uploadCurrentDevice,
   updateAccountBalance,
 }) {
   return (
@@ -1937,6 +2109,80 @@ function SettingsView({
               <small className="mt-1 block text-slate-500">{account.role}</small>
             </label>
           ))}
+        </div>
+      </Panel>
+
+      <Panel eyebrow="Nube" icon={RefreshCw} title="Sincronización Supabase">
+        <div className="space-y-4">
+          <div className="rounded-2xl bg-blue-50 p-4 text-sm leading-6 text-blue-950">
+            <p className="font-bold">
+              {isSupabaseConfigured ? "Supabase configurado" : "Supabase pendiente de configurar"}
+            </p>
+            <p className="mt-1">{syncStatus}</p>
+          </div>
+
+          {!isSupabaseConfigured && (
+            <div className="rounded-2xl bg-slate-50 p-4 text-sm leading-6 text-slate-600">
+              Añade `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY` en GitHub para activar la nube
+              en la app publicada.
+            </div>
+          )}
+
+          {isSupabaseConfigured && !session && (
+            <div className="space-y-4">
+              <TextField
+                label="Email"
+                onChange={(value) => setAuthForm((current) => ({ ...current, email: value }))}
+                placeholder="tu@email.com"
+                type="email"
+                value={authForm.email}
+              />
+              <TextField
+                label="Contraseña"
+                onChange={(value) => setAuthForm((current) => ({ ...current, password: value }))}
+                placeholder="Mínimo 6 caracteres"
+                type="password"
+                value={authForm.password}
+              />
+              <div className="flex flex-wrap gap-3">
+                <button
+                  className="primary-button"
+                  disabled={authBusy}
+                  onClick={() => handleAuth("signIn")}
+                  type="button"
+                >
+                  Entrar
+                </button>
+                <button
+                  className="secondary-button"
+                  disabled={authBusy}
+                  onClick={() => handleAuth("signUp")}
+                  type="button"
+                >
+                  Crear cuenta
+                </button>
+              </div>
+            </div>
+          )}
+
+          {isSupabaseConfigured && session && (
+            <div className="space-y-3">
+              <p className="text-sm font-semibold text-slate-600">
+                Conectado como <span className="text-slate-950">{session.user.email}</span>
+              </p>
+              <div className="flex flex-wrap gap-3">
+                <button className="secondary-button" onClick={uploadCurrentDevice} type="button">
+                  Subir este dispositivo
+                </button>
+                <button className="secondary-button" onClick={downloadCloudState} type="button">
+                  Descargar nube
+                </button>
+                <button className="ghost-button" onClick={signOut} type="button">
+                  Cerrar sesión
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </Panel>
 
@@ -2767,6 +3013,16 @@ function formatDate(dateValue) {
     day: "2-digit",
     month: "short",
   }).format(parseDate(dateValue));
+}
+
+function formatFullDateTime(dateValue) {
+  if (!dateValue) return "Sin fecha";
+  return new Intl.DateTimeFormat("es-ES", {
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    month: "short",
+  }).format(new Date(dateValue));
 }
 
 function formatCurrency(value) {
